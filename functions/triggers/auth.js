@@ -1,4 +1,3 @@
-
 // 1. 공통 모듈 (db, onUserCreated 등)을 가져옵니다.
 const { db, onUserCreated, onUserDeleted, logger } = require("../common");
 
@@ -14,8 +13,9 @@ exports.createUserDocument = onUserCreated(async (event) => {
       email: user.email || null,
       displayName: user.displayName || "신규 유저",
       userLP: 0,
+      teamIds: [], // 다중 팀 지원: teamIds 배열로 초기화
+      leaderOf: [], // 팀장인 팀 목록
       wakeUpTime: null,
-      teamId: null,
       lastChallengeStatus: "pending",
       weeklySuccessCount: 0,
       fcmToken: null, 
@@ -35,12 +35,11 @@ exports.deleteUserDocument = onUserDeleted(async (event) => {
   logger.log(`Deleting user document for: ${user.uid}`);
 
   try {
+    // TODO: 유저가 속했던 팀의 멤버 목록에서 제거하는 로직 추가 필요
     await userRef.delete();
     logger.log(`Successfully deleted user document for: ${user.uid}`);
     return;
   } catch (error) {
-    // (참고) Firestore 보안 규칙으로도 이 문서를 삭제할 수 없는 경우,
-    // 이 함수도 실패할 수 있습니다.
     logger.error(`Error deleting user document for ${user.uid}:`, error);
     return;
   }

@@ -8,7 +8,8 @@ const admin = require('firebase-admin'); // 배열 처리용
  * @return {string} 4자리 랜덤 코드 생성
  */
 function generateJoinCode() {
-  return Math.random().toString(36).substring(2, 6).toUpperCase();
+  // WAKE + 랜덤 6자리 요구사항을 4자리로 조정합니다.
+  return "WAKE" + Math.random().toString(36).substring(2, 8).toUpperCase(); 
 }
 
 // --- 1. 팀 생성 (POST /teams) ---
@@ -27,12 +28,15 @@ exports.createTeam = onCall(async (data, context) => {
 
   try {
     const userId = context.auth.uid;
-    const displayName = context.auth.token.name || "user";
+    // displayName은 유저 문서에서 가져오도록 변경하는 것이 더 안정적이지만, 여기서는 토큰 데이터를 사용합니다.
+    const displayName = context.auth.token.name || "user"; 
     const joinCode = generateJoinCode();
 
     const newTeam = {
       teamName: teamName,
       teamLP: 0,
+      totalSuccessCount: 0, // 숙면의 증명 업적을 위한 초기값
+      achievements: {},     // 업적 달성 기록을 위한 맵 초기값
       joinCode: joinCode,
       accessType: accessType,
       leaderId: userId,
@@ -339,6 +343,11 @@ exports.leaveTeam = onCall(async (data, context) => {
             if (remainingMembers.length > 0) {
                 // 남은 멤버가 있으면 첫 번째 멤버에게 위임
                 transaction.update(teamRef, { leaderId: remainingMembers[0] });
+                // 새로 위임받은 멤버의 leaderOf 배열에 팀 ID 추가
+                const newLeaderRef = db.collection("users").doc(remainingMembers[0]);
+                transaction.update(newLeaderRef, {
+                    leaderOf: admin.firestore.FieldValue.arrayUnion(teamId),
+                });
             } else {
                 // 남은 멤버가 없으면 팀 삭제
                 transaction.delete(teamRef);
@@ -408,10 +417,11 @@ exports.acceptJoinRequest = onCall(async (data, context) => {
       // 4. /teams 문서에서 처리: 멤버에 추가하고, pendingMembers에서 삭제
       const memberUpdateKey = `members.${pendingMemberId}`;
       const pendingRemoveKey = `pendingMembers.${pendingMemberId}`;
+      const memberDisplayName = userData.displayName || teamData.pendingMembers[pendingMemberId].displayName || "user"; // displayName 우선순위
 
       transaction.update(teamDoc.ref, {
         [memberUpdateKey]: {
-          displayName: userData.displayName || "user",
+          displayName: memberDisplayName,
           weeklySuccessCount: 0,
         },
         [pendingRemoveKey]: admin.firestore.FieldValue.delete(), // pendingMembers에서 삭제

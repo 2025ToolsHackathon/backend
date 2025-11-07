@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+// Firebase Admin SDK 초기화는 common/index.js에서 처리됩니다.
 
 // 1.Auth 트리거 로드
 const authTriggers = require("./triggers/auth");
@@ -6,6 +6,9 @@ const authTriggers = require("./triggers/auth");
 // 2.API 로드
 const userApi = require("./api/user");
 const challengeApi = require("./api/challenge");
+const teamApi = require("./api/teams");
+const rankingScheduler = require("./scheduled/ranking"); // 신규 추가
+const notificationScheduler = require("./scheduled/notifications");
 
 // 4. Firebase에 모든 함수들을 등록
 exports.auth = {
@@ -15,29 +18,11 @@ exports.auth = {
 exports.api = {
   ...userApi,
   ...challengeApi,
-  // ...teamApi, 
+  ...teamApi,
 };
 
+// 스케줄링된 작업 (알람 및 랭킹)
 exports.scheduled = {
-  // ...scheduledTasks, 
+  ...notificationScheduler,
+  ...rankingScheduler, // 주간 랭킹 처리 함수 추가
 };
-=======
-const admin = require("firebase-admin");
-const functions = require("firebase-functions");
-admin.initializeApp();
-
-const teamApi = require("./api/teams");
-
-exports.createTeam = teamApi.createTeam;
-exports.joinTeam = teamApi.joinTeam;
-exports.getTeamDashboard = teamApi.getTeamDashboard;
-
-const userApi = require("./api/users");
-exports.registerDeviceToken = userApi.registerDeviceToken;
-
-const missionApi = require("./api/missions");
-exports.getTodayMission = missionApi.getTodayMission;
-
-const notificationScheduler = require("./scheduled/notifications");
-exports.sendWakeUpNotifications = notificationScheduler.sendWakeUpNotifications;
->>>>>>> a09aee8df6a21d378827454e86a375a89a7df2d1

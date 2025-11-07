@@ -1,6 +1,6 @@
-const functions = require("firebase-functions");
 const admin = require("firebase-admin");
-const db = admin.firestore();
+const functions = require("firebase-functions");
+const db = admin.firestore(); // admin SDK가 이미 초기화되었다고 가정
 
 /**
  * [scheduler]
@@ -32,6 +32,7 @@ exports.sendWakeUpNotifications = functions
         }
 
         const tokens = [];
+        const updatePromises = [];
         snapshot.forEach((doc) => {
           const user = doc.data();
           if (user.fcmToken) {
@@ -56,20 +57,27 @@ exports.sendWakeUpNotifications = functions
         };
 
         // 해당 token들에 알림 발송
-        const response = await admin.messaging().send(tokens, payload);
-        console.log(`[${currentTimeKST}] ${tokens.length}명에게 알림 발송 성공.`);
+        const response = await admin.messaging().sendMulticast({ tokens, notification: payload.notification, data: payload.data });
+        console.log(`[${currentTimeKST}] ${tokens.length}명 중 ${response.successCount}명에게 알림 발송 성공.`);
 
-        response.results.forEach((result, index) => {
-          const error = result.error;
-          if (error) {
-            console.error(
-                "알림 발송 실패 토큰:",
-                tokens[index],
-                error,
-            );
-          // TODO: 토큰이 유효하지 않은 경우 ('invalid-argument') DB에서 삭제
-          }
-        });
+        // 실패한 토큰 처리 (무효한 토큰 삭제)
+        if (response.failureCount > 0) {
+            response.responses.forEach((result, index) => {
+                const error = result.error;
+                if (error && (error.code === 'messaging/invalid-argument' || error.code === 'messaging/registration-token-not-registered')) {
+                    // 유효하지 않거나 만료된 토큰은 DB에서 제거
+                    const tokenToDelete = tokens[index];
+                    const userRef = db.collection("users").where("fcmToken", "==", tokenToDelete).limit(1);
+                    updatePromises.push(userRef.get().then(qs => {
+                        if (!qs.empty) {
+                            qs.docs[0].ref.update({ fcmToken: admin.firestore.FieldValue.delete() });
+                            console.log(`Invalid token removed: ${tokenToDelete}`);
+                        }
+                    }));
+                }
+            });
+            await Promise.all(updatePromises);
+        }
 
         return null;
       } catch (error) {

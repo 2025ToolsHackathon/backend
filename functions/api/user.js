@@ -1,4 +1,3 @@
-
 // 1. 공통 모듈 (db, onCall 등)을 가져옵니다.
 const { db, onCall, HttpsError, logger } = require("../common");
 
@@ -57,8 +56,8 @@ exports.registerDeviceToken = onCall(async (request) => {
       fcmToken: fcmToken,
     });
 
-    logger.log(`User ${userId} registered FCM token: ${fcmToken}`);
-    return { success: true };
+    logger.log(`User ${userId} registered FCM token.`);
+    return { status: "success", message: "FCM 토큰이 등록되었습니다." };
   } catch (error) {
     logger.error(`Error registering FCM token for user ${userId}:`, error);
     throw new HttpsError("internal", "토큰 등록 중 오류가 발생했습니다.");
