@@ -1,6 +1,3 @@
-// backend/functions/api/team.js
-
-// A님의 공통 모듈 (db, onCall, HttpsError 등)을 가져옵니다.
 const { db, onCall, HttpsError, logger } = require("../common");
 const { getFirestore } = require("firebase-admin/firestore"); // 트랜잭션용
 const admin = require('firebase-admin'); // 배열 처리용
