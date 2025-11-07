@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PoseUp 챌린지 테스트 (A님용)</title>
+    <!-- 1. Tailwind CSS (스타일링) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 2. MediaPipe (손 제스처 인식 ML 모델) -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm/vision_bundle.js"></script>
+    
+    <!-- 3. Firebase SDK (A님의 백엔드 API 호출용) -->
+    <script type="module">
+        // Firebase SDK 스크립트 임포트
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-functions.js";
+
+        // --- Firebase 설정 (A님이 하실 일 1) ---
+        // A님의 실제 FIREBASE CONFIG 코드가 이 위치에 삽입되었습니다.
+        
+        const firebaseConfig = {
+            apiKey: "AIzaSyCIfDgy0PmbxGnlMUDF8FI2_VgR1cB2k6M",
+            authDomain: "tools-35890.firebaseapp.com",
+            projectId: "tools-35890",
+            storageBucket: "tools-35890.firebasestorage.app",
+            messagingSenderId: "974087577109",
+            appId: "1:974087577109:web:c66b287c72d17389f2781c",
+            measurementId: "G-7B18CELE21"
+        };
+
+        // --- 전역 변수 설정 ---
+        let firebaseApp, auth, functions;
+        let gestureRecognizer; // MediaPipe 모델 인스턴스
+        let webcamRunning = false;
+        let missionLabel = null; // A님의 'getTodayMission' API로 받아올 오늘의 미션 (예: "Thumb_Up")
+        let currentGesture = null; // ML 모델이 감지한 현재 제스처
+        let challengeSuccess = false; // 챌린지 성공 여부
+
+        // --- DOM 요소 가져오기 ---
+        const video = document.getElementById("webcam");
+        const statusText = document.getElementById("statusText");
+        const missionText = document.getElementById("missionText");
+        const currentGestureText = document.getElementById("currentGestureText");
+        const loginBtn = document.getElementById("loginBtn");
+        const startBtn = document.getElementById("startBtn");
+
+        // --- 1. Firebase 초기화 ---
+        try {
+            firebaseApp = initializeApp(firebaseConfig);
+            auth = getAuth(firebaseApp);
+            // Functions의 리전 설정. A님은 서울('asia-northeast3') 또는 기본 위치('us-central1')에 맞게 설정하세요.
+            functions = getFunctions(firebaseApp, "asia-northeast3"); 
+            console.log("Firebase가 성공적으로 초기화되었습니다.");
+        } catch (e) {
+            console.error("Firebase 초기화 실패:", e);
+            statusText.textContent = "Firebase 설정(firebaseConfig)을 확인하세요!";
+        }
+
+        // --- 2. ML 모델 (MediaPipe) 초기화 ---
+        // A님이 원하신 "손 제스처 인식" 모델을 로드합니다.
+        const { GestureRecognizer, FilesetResolver, RunningMode } = window.MediaPipeTasksVision;
+
+        const createGestureRecognizer = async () => {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            // 정식 Gesture Recognizer 모델 경로 (사전에 정의된 7가지 제스처 인식 가능)
+            const modelAssetPath = "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task";
+
+            gestureRecognizer = await GestureRecognizer.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: modelAssetPath,
+                    // ML 칩셋이 있다면 GPU 사용 (성능 향상)
+                    delegate: "GPU" 
+                },
+                runningMode: RunningMode.VIDEO, // 웹캠(비디오) 모드로 실행
+                numHands: 1 // 손 1개만 인식
+            });
+            statusText.textContent = "ML 모델 로드 완료. 로그인 후 챌린지를 시작하세요.";
+            console.log("Gesture recognizer 모델 로드 완료.");
+        };
+        // 페이지가 열리자마자 모델 로드 시작
+        createGestureRecognizer();
+
+
+        // --- 3. Google 로그인 기능 ---
+        const login = async () => {
+            if (!auth) return;
+            statusText.textContent = "Google 로그인 시도 중...";
+            try {
+                const provider = new GoogleAuthProvider();
+                const result = await signInWithPopup(auth, provider);
+                console.log("로그인 성공:", result.user.displayName);
+            } catch (error) {
+                console.error("로그인 실패:", error);
+                statusText.textContent = "Google 로그인에 실패했습니다. (콘솔 팝업 차단 확인)";
+            }
+        };
+
+        // --- 4. 로그인 상태 감지 ---
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // 로그인됨
+                loginBtn.style.display = "none";
+                startBtn.style.display = "block";
+                statusText.textContent = `${user.displayName}님, 환영합니다! 챌린지를 시작하세요.`;
+            } else {
+                // 로그아웃됨
+                loginBtn.style.display = "block";
+                startBtn.style.display = "none";
+                statusText.textContent = "Google 로그인이 필요합니다.";
+            }
+        });
+
+        // --- 5. 챌린지 시작 (A님의 'getTodayMission' API 호출) ---
+        const startChallenge = async () => {
+            if (!functions) {
+                statusText.textContent = "Firebase Functions가 초기화되지 않았습니다.";
+                return;
+            }
+            if (challengeSuccess) return; // 이미 성공함
+
+            statusText.textContent = "오늘의 미션을 불러오는 중...";
+            try {
+                // A님이 'backend/functions/api/challenge.js'에 만드신 API 호출!
+                const getTodayMission = httpsCallable(functions, 'api-getTodayMission');
+                const result = await getTodayMission();
+                
+                const mission = result.data;
+                // B님이 DB에 넣어둔 'Thumb_Up' 같은 라벨을 가져옵니다.
+                missionLabel = mission.missionLabel; 
+                
+                // mission.missionName은 DB에 없을 경우 missionLabel을 사용하도록 폴백 처리
+                missionText.textContent = `오늘의 미션: ${mission.missionName || missionLabel} (${missionLabel})`;
+                console.log("오늘의 미션:", missionLabel);
+                
+                // 챌린지 시작: 웹캠 켜기
+                await enableCam();
+
+            } catch (error) {
+                console.error("getTodayMission API 호출 실패:", error);
+                // B님이 DB에 /config/todayMission 문서를 수동으로 만들어주셔야 합니다!
+                statusText.textContent = "오늘의 미션 로딩 실패! (DB에 /config/todayMission 문서가 있는지 확인)";
+            }
+        };
+
+        // --- 6. 웹캠 켜기 ---
+        const enableCam = async () => {
+            if (!gestureRecognizer) {
+                // alert() 대신 상태 텍스트 사용
+                statusText.textContent = "ML 모델이 아직 로드 중입니다. 잠시만 기다려주세요.";
+                return;
+            }
+            webcamRunning = true;
+            statusText.textContent = "웹캠을 켜는 중... (권한을 허용해주세요)";
+
+            const constraints = { video: true };
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                video.srcObject = stream;
+                // 비디오 데이터가 로드되면 예측 시작 이벤트 리스너 연결
+                video.addEventListener("loadeddata", predictWebcam);
+            } catch (err) {
+                console.error("웹캠 접근 실패:", err);
+                statusText.textContent = "웹캠을 켤 수 없습니다. (권한 확인)";
+            }
+        };
+
+        // --- 7. 실시간 예측 (MediaPipe 실행) ---
+        let lastVideoTime = -1;
+        // 미션 성공을 위한 누적 카운터 (2초 유지해야 성공)
+        let successHoldFrames = 0; 
+        const REQUIRED_HOLD_FRAMES = 60; // 초당 30프레임 기준 2초 (30 * 2)
+
+        const predictWebcam = async () => {
+            if (!webcamRunning) return;
+
+            const nowInMs = Date.now();
+            if (video.currentTime !== lastVideoTime) {
+                lastVideoTime = video.currentTime;
+                // ML 모델에 현재 비디오 프레임 넣고 예측 실행
+                const results = gestureRecognizer.recognizeForVideo(video, nowInMs);
+
+                // 예측 결과 처리
+                if (results.gestures && results.gestures.length > 0) {
+                    const gesture = results.gestures[0][0]; // 가장 확률 높은 제스처
+                    currentGesture = gesture.categoryName; // 예: "Thumb_Up"
+                    const score = (gesture.score * 100).toFixed(2);
+                    currentGestureText.textContent = `현재 동작: ${currentGesture} (${score}%)`;
+                    
+                    // 정답과 비교
+                    checkSuccess(gesture.categoryName);
+
+                } else {
+                    currentGesture = null;
+                    currentGestureText.textContent = "현재 동작: (손을 보여주세요)";
+                    successHoldFrames = 0; // 손이 없으면 카운트 초기화
+                }
+            }
+            // 다음 프레임 예측
+            window.requestAnimationFrame(predictWebcam);
+        };
+
+        // --- 8. 성공 판정 (A님의 'processChallengeResult' API 호출) ---
+        const checkSuccess = async (detectedGesture) => {
+            if (challengeSuccess || !missionLabel) return;
+
+            if (detectedGesture === missionLabel) {
+                // 정답 제스처가 감지됨
+                successHoldFrames++;
+                statusText.textContent = `자세 유지 중... ${Math.min(100, (successHoldFrames / REQUIRED_HOLD_FRAMES) * 100).toFixed(0)}%`;
+                
+                if (successHoldFrames >= REQUIRED_HOLD_FRAMES) {
+                    // 2초 이상 유지! 챌린지 성공!
+                    challengeSuccess = true;
+                    webcamRunning = false;
+                    
+                    // 웹캠 스트림 정지
+                    if (video.srcObject) {
+                         video.srcObject.getTracks().forEach(track => track.stop());
+                    }
+
+                    statusText.textContent = `🎉 챌린지 성공! (${missionLabel}) 서버 저장 중...`;
+                    console.log("챌린지 성공! processChallengeResult API 호출 시도...");
+
+                    try {
+                        // A님이 'backend/functions/api/challenge.js'에 만드신 API 호출!
+                        const processChallengeResult = httpsCallable(functions, 'api-processChallengeResult');
+                        const result = await processChallengeResult({ result: "success" });
+                        
+                        console.log("processChallengeResult API 응답:", result.data);
+                        statusText.textContent = `✅ 챌린지 성공! (+100 LP) 서버에 저장 완료!`;
+                        
+                        // 실제 앱에서는 알람 설정 플로우로 이동해야 함
+                        // messagebox("내일 알람을 설정하세요!")
+
+                    } catch (error) {
+                        console.error("processChallengeResult API 호출 실패:", error);
+                        statusText.textContent = "⚠️ 챌린지는 성공했으나, 서버 저장에 실패했습니다. (콘솔 확인)";
+                    }
+                }
+            } else {
+                // 정답 제스처가 아님 (카운트 초기화)
+                successHoldFrames = 0;
+            }
+        };
+
+        // --- 9. 버튼에 기능 연결 ---
+        loginBtn.addEventListener("click", login);
+        startBtn.addEventListener("click", startChallenge);
+
+    </script>
+</head>
+
+<body class="bg-gray-900 text-white font-sans flex items-center justify-center min-h-screen">
+    <div class="bg-gray-800 p-8 rounded-lg shadow-xl w-full max-w-2xl text-center">
+        <h1 class="text-4xl font-bold mb-4 text-cyan-400">PoseUp 챌린지 테스트</h1>
+        <p class="text-gray-400 mb-6">(A님 백엔드 API 및 MediaPipe 연동 테스트)</p>
+
+        <!-- 1. 로그인 버튼 -->
+        <button id="loginBtn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg text-xl">
+            1. Google 계정으로 로그인
+        </button>
+
+        <!-- 2. 챌린지 시작 버튼 (로그인 후 보임) -->
+        <button id="startBtn" style="display: none;" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg text-xl">
+            2. 챌린지 시작!
+        </button>
+
+        <!-- 3. 웹캠 & ML 예측 화면 -->
+        <div id="challengeArea" class="mt-6 p-4 bg-gray-700 rounded-lg">
+            <!-- 웹캠 비디오 (좌우 반전) -->
+            <video id="webcam" class="w-full h-auto rounded-md -scale-x-100" autoplay playsinline></video>
+            
+            <div class="mt-4 text-left space-y-2">
+                <p id="missionText" class="text-xl font-semibold text-yellow-400">오늘의 미션: (대기 중...)</p>
+                <p id="currentGestureText" class="text-xl font-semibold text-orange-400">현재 동작: (손을 보여주세요)</p>
+            </div>
+        </div>
+
+        <!-- 4. 상태 메시지 -->
+        <p id="statusText" class="mt-6 text-lg text-gray-300 bg-gray-700 p-3 rounded-md">ML 모델 로드 중...</p>
+    </div>
+</body>
+</html>
